@@ -1,0 +1,787 @@
+---
+title: "AML Data Transformation + Modeling + Validation"
+output: html_notebook
+---
+
+# Read data. Reads from a file.
+```{r}
+data <- read.csv(file.choose(), header = T)
+str(data)
+dim(data)
+data
+```
+
+# Loading libraries
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(DataExplorer)
+
+```
+
+# Data Summary 
+```{r}
+summary(data)
+```
+
+# Checking Missing data 
+```{r}
+# changing all blanks to NA
+is.na(data) <- data == ''
+# check for NA in data 
+is.na(data)
+sum (is.na(data))
+colSums(sapply(data,is.na))
+plot_missing(data) 
+```
+
+# Data exploration 1 (before cleaning/transformation)
+```{r}
+barplot(table(data$animal_type), col = "lightblue", main = "Graph 2: Number of Animal Types Taken Into The Shelter")
+```
+```{r}
+barplot(table(data$outcome_type), col = "lightblue", main = "Graph 2: Number of Animal Types Taken Into The Shelter", cex.names=0.65, las=2)
+```
+
+# Data Cleaning/transformation 
+## Filter dog only 
+```{r}
+datadog <- data[data$animal_type == "Dog", ]
+str(datadog)
+```
+
+## Checking for missing value
+```{r}
+# check for NA in data 
+is.na(datadog)
+sum (is.na(datadog))
+colSums(sapply(datadog,is.na))
+plot_missing(datadog) 
+```
+
+## checking out outcome_subtype 
+
+```{r}
+barplot(table(datadog$outcome_subtype), col = "green", main = "Subtype of Animal Outcome", las=2, cex.names=0.8)
+```
+```{r}
+table(is.na(datadog$outcome_subtype))
+```
+
+## Transforming age_upon_outcome to numeric values 
+```{r}
+# Splitting age_upon_outcome into 'age' and 'unit'
+datadog$age <- sapply(strsplit(as.character(datadog$age_upon_outcome),' '), "[", 1)
+datadog$unit <- sapply(strsplit(as.character(datadog$age_upon_outcome),' '), "[", 2)
+unique(datadog$unit)
+
+# Change 'Age' from char to numeric 
+datadog$age <- as.numeric(datadog$age)
+unique(datadog$age)
+```
+
+## Replacing all ages into years
+```{r}
+datadog = within(datadog,{
+  age_yrs = round(age,digits = 2)
+  age_yrs[unit %in% c('day','days')] = round(age/365, digits =2)
+  age_yrs[unit %in% c('week','weeks')] = round(age/52, digits = 2)
+  age_yrs[unit %in% c('month','months')] = round(age/12, digits =2)
+})
+
+```
+
+## Transforming 'name' to 0 or 1 
+```{r}
+datadog <- mutate(datadog, name = ifelse(is.na(name), 0,1))
+```
+
+## Transforming 'sex_upon_outcome'
+```{r}
+# Splitting into sex and reproductive_status 
+datadog$rep_status <- sapply(strsplit(as.character(datadog$sex_upon_outcome),' '), "[", 1)
+datadog$sex <- sapply(strsplit(as.character(datadog$sex_upon_outcome),' '), "[", 2)
+
+# check results 
+unique(datadog$sex)
+unique(datadog$rep_status)
+unique(datadog$sex_upon_outcome)
+
+# Sex - change NA -> unknown 
+datadog$sex <- ifelse(is.na(datadog$sex), 'Unknown',datadog$sex)
+
+# rep_status - joining null and unknown tgt
+datadog$rep_status <- ifelse(datadog$rep_status=="NULL","Unknown", datadog$rep_status)
+
+# check final results 
+unique(datadog$sex)
+unique(datadog$rep_status)
+
+```
+
+## Transforming 'color' into 'solid' and 'mixed' only 
+```{r}
+# checking total unique variations
+length(unique(datadog$color)) #336
+#unique(datadog$color)
+
+# mixed color = 1, solid color = 0
+datadog$color <- ifelse(str_count(datadog$color, "/") > 0, 'Mix', 'Solid')
+```
+
+## Transforming 'breed' into 'mixed' and 'pure'
+```{r}
+#checking
+length(unique(datadog$breed)) #1893
+
+# transform into 'mix'/'pure'
+datadog$breed <- ifelse(grepl("/",datadog$breed, fixed=TRUE) | grepl("Mix",datadog$breed, fixed=TRUE), 'Mixed', 'Pure')
+```
+
+## Getting day of week and time of day from 'datetime'
+```{r}
+# split into date and time first 
+datadog$date <- sapply(strsplit(as.character(datadog$datetime),'T'), "[", 1)
+datadog$time <- sapply(strsplit(as.character(datadog$datetime),'T'), "[", 2)
+
+# convert date into day of week 
+datadog$day <- weekdays(as.Date(datadog$date))
+
+# reorder days 
+datadog$day<- factor(datadog$day, levels=c("Monday",
+    "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday","Sunday"))
+
+# convert time to hour then time of the day 
+datadog$hour <- as.numeric(gsub("\\:.*$", "", datadog$time))
+datadog$time_category <- ifelse(datadog$hour >= 05 & datadog$hour <= 11, "Morning",
+            ifelse(datadog$hour > 11 & datadog$hour <= 16, "Afternoon",
+            ifelse(datadog$hour > 16 & datadog$hour <= 19, "Evening", "Night")))
+
+# reorder time category 
+datadog$time_category<- factor(datadog$time_category, levels=c("Morning","Afternoon","Evening","Night"))
+
+
+```
+
+## Transform outcome type to adopted vs not adopted
+```{r}
+unique(datadog$outcome_type)
+datadog$adopt <- ifelse(grepl("Adoption",datadog$outcome_type, fixed=TRUE), "Y" , "N")
+
+# reorder adopt (so that Y will be the first level) 
+datadog$adopt<- factor(datadog$adopt, levels=c("Y","N"))
+
+```
+## Droping unwanted variables 
+```{r}
+# Delete 'outcome subtype' & 'animal type'
+datadog <- select (datadog, -outcome_subtype)
+datadog <- select(datadog, -animal_type)
+
+# Delete Animal ID (no useful information)
+datadog <- select (datadog, -animal_id)
+
+# Delete variables 'age', 'unit' and 'age upon outcome'
+datadog <- select (datadog, -c('age','unit','age_upon_outcome'))
+
+# Delete 'sex upon outcome'
+datadog <- select (datadog, -sex_upon_outcome)
+
+# Delete variables 'datetime', 'date', 'time', 'hour', 'monthyear','date_of_birth'
+datadog <- select (datadog, -c('datetime','monthyear', 'time', 'hour', 'date_of_birth','date'))
+```
+
+## convert categorical variables into factors 
+```{r}
+datadog_f <- mutate_if(datadog, is.character, as.factor)
+```
+
+## convert factors to numeric 
+```{r}
+# change all factors to numeric values 
+datadog_num <- mutate_if(datadog_f, is.factor, as.numeric)
+
+# change adopt from 1,2 to 0,1
+datadog_num$adopt <- ifelse(datadog_num$adopt == 2, 0 ,1)
+
+# reorder adopt (so that 1 will be the first level) 
+datadog_num$adopt<- factor(datadog_num$adopt, levels=c(0,1))
+```
+
+```{r}
+# Delete outcome type (because this will be linear to adopt since it is derived from it) this one delete after EDA because still wanna use during eda
+datadog_num <- select (datadog_num, -outcome_type)
+datadog_f <- select (datadog_f, -outcome_type)
+```
+
+################################################################################################################################################
+# Data partition (60:40)
+
+## partition for datadog_num
+```{r}
+library(caTools)
+set.seed(43)
+split = sample.split(datadog_num$adopt, SplitRatio = 0.6)
+training_set = subset(datadog_num, split == TRUE)
+test_set = subset(datadog_num, split == FALSE)
+```
+
+## partition for datadog_f
+```{r}
+set.seed(43)
+split = sample.split(datadog_f$adopt, SplitRatio = 0.6)
+training_setf = subset(datadog_f, split == TRUE)
+test_setf = subset(datadog_f, split == FALSE)
+```
+
+
+## Checking Class distribution
+```{r}
+# check for datadog_num
+prop.table(table(datadog_num$adopt))
+prop.table(table(training_set$adopt))
+prop.table(table(test_set$adopt))
+
+# check for datadog_f
+prop.table(table(datadog_f$adopt))
+prop.table(table(training_setf$adopt))
+prop.table(table(test_setf$adopt))
+```
+
+## Feature Selection
+```{r}
+library(caret)
+set.seed(150)
+rPartMod <- train(adopt ~ ., data=training_set, method="rpart")
+rpartImp <- varImp(rPartMod)
+print(rpartImp)
+```
+color and sex got lowest importance 
+
+# Modeling 
+## 1) Logistic Regression 
+## Testing for correlation
+
+```{r}
+library(GGally) 
+# Convert data to numeric
+#corr <- data.frame(lapply(recast_data, as.integer))
+# Plot the graph
+ggcorr(datadog_num,
+    method = c("pairwise", "spearman"),
+    nbreaks = 6,
+    hjust = 0.8,
+    label = TRUE,
+    label_size = 3,
+    color = "grey50")
+```
+## Check linearity & normality of model 
+```{r}
+#linearity
+plot(model_log3,1)
+
+#normality
+plot(model_log3,2)
+```
+
+## Model implementation 
+```{r}
+# model 1a
+# Building logistic model
+model_log1 = glm(adopt ~.,
+                 training_set,
+                 family = "binomial",
+                 maxit = 100)
+summary(model_log1)
+
+# Predicting the Test set results
+prob_pred_log = predict(model_log1, type = 'response', test_set[ ,-9] )
+
+y_pred_log = ifelse(prob_pred_log > 0.5, 1, 0)
+#y_pred_log
+cm_log = table(test_set$adopt, y_pred_log)
+cm_log
+
+accuracy_log = sum(diag(cm_log))/sum(cm_log)*100
+accuracy_log
+
+# important variables 
+varImp(model_log1)
+```
+(prediction from a rank-deficient fit may be misleading) this error is bcoz use too many predictors in the formula of glm for the data you gave
+https://discuss.analyticsvidhya.com/t/what-does-the-warning-message-prediction-from-a-rank-deficient-fit-mean-in-logistic-regression/4282
+
+
+```{r}
+# model 1b
+# removing variable 'name'
+
+# Building logistic model 
+model_log2 = glm(adopt ~.-name,
+                 training_set,
+                 family = "binomial",
+                 maxit = 100)
+summary(model_log2)
+
+# Predicting the Test set results
+prob_pred_log2 = predict(model_log2, type = 'response', test_set[ ,-9] )
+
+y_pred_log2 = ifelse(prob_pred_log2 > 0.5, 1, 0)
+#y_pred_log
+cm_log2 = table(test_set$adopt, y_pred_log2)
+cm_log2
+
+accuracy_log2 = sum(diag(cm_log2))/sum(cm_log2)*100
+accuracy_log2
+
+# important variables 
+varImp(model_log2)
+```
+```{r}
+# model 1c
+# removing variable 'name', 'color'
+
+# Building logistic model
+model_log3 = glm(adopt ~.-name -color,
+                 training_set,
+                 family = "binomial",
+                 maxit = 100)
+summary(model_log3)
+
+# Predicting the Test set results
+prob_pred_log3 = predict(model_log3, type = 'response', test_set[ ,-9] )
+
+y_pred_log3 = ifelse(prob_pred_log3 > 0.5, 1, 0)
+#y_pred_log
+cm_log3 = table(test_set$adopt, y_pred_log3)
+cm_log3
+
+accuracy_log3 = sum(diag(cm_log3))/sum(cm_log3)*100
+accuracy_log3
+
+# important variables 
+varImp(model_log3)
+
+#formula 
+round(exp(coef(model_log3)),3)
+
+
+```
+
+## Logistic Models Evaluation
+## likelihood ratio test 
+## ANOVA test 
+```{r}
+#h0 = there is no diff between all 3 models , h1 = there is diff between all 3 models  
+anova(model_log1, model_log2,model_log3, test ="Chisq")
+```
+in this case, model 3 has the highest chi-sq value which is greater than 0.05, which means that h1 is rejected, and h0 is accepted
+so model 3 is the best model out of the 3 
+
+```{r}
+anova(model_log1, model_log3, test ="Chisq")
+```
+
+## AUC & ROC for logistic 
+```{r}
+library(ROCR)
+```
+
+```{r}
+# auc and roc of log model 1
+Predict_ROC = predict(model_log1, type = 'response', test_set)
+Predict_ROC = prediction(Predict_ROC, test_set$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+```{r}
+# auc and roc of log model 2
+Predict_ROC = predict(model_log2, type = 'response', test_set)
+Predict_ROC = prediction(Predict_ROC, test_set$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+```{r}
+# auc and roc of log model 3
+Predict_ROC = predict(model_log3, type = 'response', test_set)
+Predict_ROC = prediction(Predict_ROC, test_set$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+this AUC is 0.777
+The higher the AUC, the better the performance of the model at distinguishing between the positive and negative classes.
+https://www.analyticsvidhya.com/blog/2020/06/auc-roc-curve-machine-learning/#:~:text=The%20Area%20Under%20the%20Curve,the%20positive%20and%20negative%20classes.
+
+## 2) Random Forest 
+## mtry: Number of variables randomly sampled as candidates at each split.
+## ntree: Number of trees to grow.
+```{r}
+library(randomForest)
+```
+
+## Training & Tesing model
+## metric = Accuracy was used to select the optimal model using the largest value.
+
+
+```{r}
+# rf model 1 (random search)
+
+Random_control <- trainControl(method='repeatedcv', 
+                        number=3, 
+                        repeats=3,
+                        search = 'random')
+
+set.seed(135)
+model_rf_random <- train(adopt ~ .,
+                   data = training_setf,
+                   method = 'rf',
+                   metric = 'Accuracy',
+                   tuneLength  = 10, 
+                   trControl = Random_control)
+
+print(model_rf_random)
+
+# testing 
+test_setf$pred_rf_rand<-predict(object = model_rf_random, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_rf_rand)
+
+```
+```{r}
+# rf model 2 (random search)
+
+Random_control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=3,
+                        search = 'random')
+
+set.seed(135)
+model_rf_random2 <- train(adopt ~ .,
+                   data = training_setf,
+                   method = 'rf',
+                   metric = 'Accuracy',
+                   tuneLength  = 10, 
+                   trControl = Random_control)
+
+print(model_rf_random2)
+
+# testing 
+test_setf$pred_rf_rand2<-predict(object = model_rf_random2, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_rf_rand2)
+
+```
+
+```{r}
+# rf model 3 (grid search)
+#create tunegrid with 8 values from 1:8 for mtry to tunning model. Our train function will change number of entry variable at each split according to tunegrid. 
+# training 
+
+grid_control <- trainControl(method='repeatedcv', 
+                        number=3, 
+                        repeats=3, 
+                        search='grid')
+
+tunegrid <- expand.grid(.mtry = (1:8)) 
+
+model_rf_grid <- train(adopt ~ ., 
+                       data = training_setf,
+                       method = 'rf',
+                       metric = 'Accuracy',
+                       tuneGrid = tunegrid,
+                       trControl = grid_control)
+
+print(model_rf_grid)
+
+# testing
+test_setf$pred_rf_grid<-predict(object = model_rf_grid, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_rf_grid)
+
+```
+```{r}
+# rf model 4 (grid search)
+#create tunegrid with 8 values from 1:8 for mtry to tunning model. Our train function will change number of entry variable at each split according to tunegrid. 
+# training
+
+grid_control <- trainControl(method='repeatedcv', 
+                        number=5, 
+                        repeats=3, 
+                        search='grid')
+
+tunegrid <- expand.grid(.mtry = (1:18)) 
+
+model_rf_grid2 <- train(adopt ~ ., 
+                       data = training_setf,
+                       method = 'rf',
+                       metric = 'Accuracy',
+                       tuneGrid = tunegrid,
+                       trControl = grid_control)
+
+print(model_rf_grid2)
+
+# testing
+test_setf$pred_rf_grid2<-predict(object = model_rf_grid2, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_rf_grid2)
+
+```
+
+
+## Variable importance 
+## the important features are likely to appear closer to the root of the tree, while less important features will often appear closed to the leaves.
+```{r}
+plot(varImp(model_rf_random2))
+#varImp(model_rf_grid)
+```
+
+## AUC and ROC for RF
+## 1) 
+```{r}
+# auc and roc of rf1
+Predict_ROC = predict(model_rf_random, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+## 2)
+```{r}
+# auc and roc of rf2
+Predict_ROC = predict(model_rf_random2, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+## 3)
+```{r}
+# auc and roc of rf3
+Predict_ROC = predict(model_rf_grid, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+## 4) 
+```{r}
+# auc and roc of rf4
+Predict_ROC = predict(model_rf_grid2, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+
+## 3) KNN Model Implementation 
+
+```{r}
+# KNN model 1 (basic)
+knn_mod1 = train(
+  adopt ~ .,
+  data = training_setf,
+  method = "knn",
+  trControl = trainControl(method = "repeatedcv", number = 5, repeats = 3)
+)
+
+print(knn_mod1)
+
+test_setf$pred_knn1<-predict(object = knn_mod1, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_knn1)
+```
+
+```{r}
+# KNN model 2 (with preprocess)
+#center & scale Essentially transforming each predictor to have mean 0 and variance 1
+
+knn_mod2 = train(
+  adopt ~ .,
+  data = training_setf,
+  method = "knn",
+  preProcess = c("center","scale"),
+  trControl = trainControl(method = "repeatedcv", number = 5, repeats = 3)
+)
+
+print(knn_mod2)
+
+test_setf$pred_knn2<-predict(object = knn_mod2, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_knn2)
+```
+```{r}
+# KNN model 3 (tune length = 10)
+
+knn_mod3 = train(
+  adopt ~ .,
+  data = training_setf,
+  method = "knn",
+  tuneLength = 10,
+  trControl = trainControl(method = "repeatedcv", number = 5, repeats = 3)
+)
+
+print(knn_mod3)
+
+test_setf$pred_knn3<-predict(object = knn_mod3, test_setf)
+confusionMatrix(test_setf$adopt,test_setf$pred_knn3)
+```
+## AUC and ROC for KNN
+```{r}
+# auc and roc of KNN1
+Predict_ROC = predict(knn_mod1, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+```{r}
+# auc and roc of KNN2
+Predict_ROC = predict(knn_mod2, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+```{r}
+# auc and roc of KNN3
+Predict_ROC = predict(knn_mod3, test_setf, type = 'prob')
+Predict_ROC = prediction(Predict_ROC[,1], test_setf$adopt)
+perf = performance(Predict_ROC, "tpr", "fpr")
+Predict_ROC
+perf
+plot(perf, colorize = T)
+plot(perf, colorize=T, 
+     main = "ROC curve",
+     ylab = "Sensitivity",
+     xlab = "Specificity",
+     print.cutoffs.at=seq(0,1,0.3),
+     text.adj= c(-0.2,1.7))
+
+# Area Under Curve
+auc = as.numeric(performance(Predict_ROC, "auc")@y.values)
+auc = round(auc, 3)
+auc
+```
+
+
+## Variable importance for KNN
+```{r}
+varImp(knn_mod1)
+varImp(knn_mod2)
+varImp(knn_mod3)
+```
+
+
