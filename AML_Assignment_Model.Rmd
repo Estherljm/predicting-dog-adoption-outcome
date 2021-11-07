@@ -1,7 +1,3 @@
----
-title: "AML Data Transformation + Modeling + Validation"
-output: html_notebook
----
 
 # Read data. Reads from a file.
 ```{r}
